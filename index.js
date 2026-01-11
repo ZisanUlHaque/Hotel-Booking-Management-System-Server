@@ -1,11 +1,370 @@
-const express = require('express')
-const app = express()
-const port = 3000
+// server.js
+const express = require("express");
+const cors = require("cors");
+require("dotenv").config();
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRETE);
 
-app.get('/', (req, res) => {
-  res.send('Hello Worlddddddd!')
-})
+const app = express();
+const port = process.env.PORT || 3000;
+
+// middleware
+app.use(cors());
+app.use(express.json());
+
+// MongoDB setup
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ifwcykr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
+
+async function run() {
+  try {
+    await client.connect();
+
+    const db = client.db("travelio_user");
+    const bookingCollection = db.collection("bookings");
+    const paymentCollection = db.collection("payments"); // ✅ NEW
+
+    // ✅ GET all bookings or filter by email
+    app.get("/bookings", async (req, res) => {
+      try {
+        const query = {};
+        const { email, status, userId } = req.query;
+
+        if (email) {
+          query.userEmail = email;
+        }
+        if (status) {
+          query.status = status;
+        }
+        if (userId) {
+          query.userId = userId;
+        }
+
+        const cursor = bookingCollection
+          .find(query)
+          .sort({ createdAt: -1 });
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching bookings:", error);
+        res
+          .status(500)
+          .send({
+            message: "Failed to fetch bookings",
+            error: error.message,
+          });
+      }
+    });
+
+    // ✅ GET single booking by ID
+    app.get("/bookings/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await bookingCollection.findOne(query);
+
+        if (!result) {
+          return res
+            .status(404)
+            .send({ message: "Booking not found" });
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching booking:", error);
+        res
+          .status(500)
+          .send({
+            message: "Failed to fetch booking",
+            error: error.message,
+          });
+      }
+    });
+
+    // ✅ POST create new booking
+    app.post("/bookings", async (req, res) => {
+      try {
+        const booking = req.body;
+
+        if (
+          !booking.tourId ||
+          !booking.userEmail ||
+          !booking.travelDate
+        ) {
+          return res.status(400).send({
+            message:
+              "Missing required fields: tourId, userEmail, and travelDate are required",
+          });
+        }
+
+        booking.createdAt = new Date();
+        booking.status = booking.status || "pending";
+        booking.paymentStatus = booking.paymentStatus || "unpaid";
+
+        const result = await bookingCollection.insertOne(booking);
+        res.send(result);
+      } catch (error) {
+        console.error("Error creating booking:", error);
+        res
+          .status(500)
+          .send({
+            message: "Failed to create booking",
+            error: error.message,
+          });
+      }
+    });
+
+    // ✅ PATCH update booking
+    app.patch("/bookings/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updateData = req.body;
+
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            ...updateData,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+
+        const result = await bookingCollection.updateOne(
+          filter,
+          updateDoc
+        );
+
+        if (result.matchedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Booking not found" });
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error updating booking:", error);
+        res
+          .status(500)
+          .send({
+            message: "Failed to update booking",
+            error: error.message,
+          });
+      }
+    });
+
+    // ✅ DELETE booking
+    app.delete("/bookings/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await bookingCollection.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Booking not found" });
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error deleting booking:", error);
+        res
+          .status(500)
+          .send({
+            message: "Failed to delete booking",
+            error: error.message,
+          });
+      }
+    });
+
+    /* -------------------- STRIPE CHECKOUT (PAYMENT) -------------------- */
+
+    // ✅ Create checkout session from existing booking
+    app.post("/create-checkout-session", async (req, res) => {
+      try {
+        const { bookingId } = req.body;
+        if (!bookingId) {
+          return res
+            .status(400)
+            .send({ message: "bookingId is required" });
+        }
+
+        const booking = await bookingCollection.findOne({
+          _id: new ObjectId(bookingId),
+        });
+
+        if (!booking) {
+          return res
+            .status(404)
+            .send({ message: "Booking not found" });
+        }
+
+        const amount =
+          Math.round(
+            Number(
+              booking.finalPrice ||
+                booking.originalTotal ||
+                booking.pricePerPerson *
+                  (booking.guests || booking.numberOfGuests || 1)
+            ) * 100
+          ) || 0;
+
+        if (!amount) {
+          return res
+            .status(400)
+            .send({ message: "Invalid booking amount" });
+        }
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          customer_email: booking.userEmail || undefined,
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                unit_amount: amount,
+                product_data: {
+                  name:
+                    booking.tourTitle || "Tour Booking",
+                },
+              },
+              quantity: 1,
+            },
+          ],
+          metadata: {
+            bookingId: booking._id.toString(),
+            tourId: booking.tourId?.toString() || "",
+            userEmail: booking.userEmail || "",
+          },
+          success_url: `${process.env.SITE_DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.SITE_DOMAIN}/dashboard/my-booking`,
+        });
+
+        res.send({ url: session.url });
+      } catch (error) {
+        console.error("Stripe checkout error:", error);
+        res
+          .status(500)
+          .send({
+            message: "Failed to create checkout session",
+            error: error.message,
+          });
+      }
+    });
+
+    // ✅ Confirm payment & update booking + save payment
+    app.get("/booking-success", async (req, res) => {
+      try {
+        const sessionId = req.query.session_id;
+        if (!sessionId) {
+          return res
+            .status(400)
+            .send({ message: "Missing session_id" });
+        }
+
+        const session = await stripe.checkout.sessions.retrieve(
+          sessionId
+        );
+
+        const transactionId = session.payment_intent;
+        const amount = session.amount_total; // cents
+        const currency = session.currency;
+        const meta = session.metadata || {};
+
+        // Check existing payment to avoid duplicate
+        const existing = await paymentCollection.findOne({
+          transactionId,
+        });
+        if (existing) {
+          return res.send({
+            message: "already exists",
+            transactionId,
+            payment: existing,
+          });
+        }
+
+        if (session.payment_status === "paid") {
+          // Save payment info
+          const paymentDoc = {
+            bookingId: meta.bookingId || "",
+            tourId: meta.tourId || "",
+            userEmail: meta.userEmail || session.customer_email,
+            amount,
+            currency,
+            transactionId,
+            paymentStatus: session.payment_status,
+            createdAt: new Date(),
+          };
+
+          const payResult =
+            await paymentCollection.insertOne(paymentDoc);
+
+          // Update booking
+          if (meta.bookingId) {
+            await bookingCollection.updateOne(
+              { _id: new ObjectId(meta.bookingId) },
+              {
+                $set: {
+                  paymentStatus: "paid",
+                  status: "confirmed",
+                  transactionId,
+                  updatedAt: new Date().toISOString(),
+                },
+              }
+            );
+          }
+
+          const booking = meta.bookingId
+            ? await bookingCollection.findOne({
+                _id: new ObjectId(meta.bookingId),
+              })
+            : null;
+
+          return res.send({
+            success: true,
+            transactionId,
+            paymentId: payResult.insertedId,
+            bookingId: meta.bookingId,
+            booking,
+          });
+        }
+
+        res.send({
+          success: false,
+          message: "Payment not completed",
+        });
+      } catch (error) {
+        console.error("Booking success error:", error);
+        res
+          .status(500)
+          .send({
+            message: "Failed to confirm booking",
+            error: error.message,
+          });
+      }
+    });
+
+    // test ping
+    await client.db("admin").command({ ping: 1 });
+    console.log("✅ Connected to MongoDB, APIs ready");
+  } catch (error) {
+    console.error("Mongo error:", error);
+  }
+}
+
+run().catch(console.dir);
+
+app.get("/", (req, res) => {
+  res.send("Happy Travelinggggg!!!");
+});
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-})
+  console.log(`🚀 Server running on port ${port}`);
+});
