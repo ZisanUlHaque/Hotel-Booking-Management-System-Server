@@ -30,6 +30,8 @@ async function run() {
     const db = client.db("travelio_user");
     const bookingCollection = db.collection("bookings");
     const paymentCollection = db.collection("payments"); // ✅ NEW
+    const usersCollection = db.collection("users"); // ✅ NEW
+
 
     // ✅ GET all bookings or filter by email
     app.get("/bookings", async (req, res) => {
@@ -47,19 +49,15 @@ async function run() {
           query.userId = userId;
         }
 
-        const cursor = bookingCollection
-          .find(query)
-          .sort({ createdAt: -1 });
+        const cursor = bookingCollection.find(query).sort({ createdAt: -1 });
         const result = await cursor.toArray();
         res.send(result);
       } catch (error) {
         console.error("Error fetching bookings:", error);
-        res
-          .status(500)
-          .send({
-            message: "Failed to fetch bookings",
-            error: error.message,
-          });
+        res.status(500).send({
+          message: "Failed to fetch bookings",
+          error: error.message,
+        });
       }
     });
 
@@ -71,20 +69,16 @@ async function run() {
         const result = await bookingCollection.findOne(query);
 
         if (!result) {
-          return res
-            .status(404)
-            .send({ message: "Booking not found" });
+          return res.status(404).send({ message: "Booking not found" });
         }
 
         res.send(result);
       } catch (error) {
         console.error("Error fetching booking:", error);
-        res
-          .status(500)
-          .send({
-            message: "Failed to fetch booking",
-            error: error.message,
-          });
+        res.status(500).send({
+          message: "Failed to fetch booking",
+          error: error.message,
+        });
       }
     });
 
@@ -93,11 +87,7 @@ async function run() {
       try {
         const booking = req.body;
 
-        if (
-          !booking.tourId ||
-          !booking.userEmail ||
-          !booking.travelDate
-        ) {
+        if (!booking.tourId || !booking.userEmail || !booking.travelDate) {
           return res.status(400).send({
             message:
               "Missing required fields: tourId, userEmail, and travelDate are required",
@@ -112,12 +102,10 @@ async function run() {
         res.send(result);
       } catch (error) {
         console.error("Error creating booking:", error);
-        res
-          .status(500)
-          .send({
-            message: "Failed to create booking",
-            error: error.message,
-          });
+        res.status(500).send({
+          message: "Failed to create booking",
+          error: error.message,
+        });
       }
     });
 
@@ -135,26 +123,19 @@ async function run() {
           },
         };
 
-        const result = await bookingCollection.updateOne(
-          filter,
-          updateDoc
-        );
+        const result = await bookingCollection.updateOne(filter, updateDoc);
 
         if (result.matchedCount === 0) {
-          return res
-            .status(404)
-            .send({ message: "Booking not found" });
+          return res.status(404).send({ message: "Booking not found" });
         }
 
         res.send(result);
       } catch (error) {
         console.error("Error updating booking:", error);
-        res
-          .status(500)
-          .send({
-            message: "Failed to update booking",
-            error: error.message,
-          });
+        res.status(500).send({
+          message: "Failed to update booking",
+          error: error.message,
+        });
       }
     });
 
@@ -166,20 +147,16 @@ async function run() {
         const result = await bookingCollection.deleteOne(query);
 
         if (result.deletedCount === 0) {
-          return res
-            .status(404)
-            .send({ message: "Booking not found" });
+          return res.status(404).send({ message: "Booking not found" });
         }
 
         res.send(result);
       } catch (error) {
         console.error("Error deleting booking:", error);
-        res
-          .status(500)
-          .send({
-            message: "Failed to delete booking",
-            error: error.message,
-          });
+        res.status(500).send({
+          message: "Failed to delete booking",
+          error: error.message,
+        });
       }
     });
 
@@ -190,9 +167,7 @@ async function run() {
       try {
         const { bookingId } = req.body;
         if (!bookingId) {
-          return res
-            .status(400)
-            .send({ message: "bookingId is required" });
+          return res.status(400).send({ message: "bookingId is required" });
         }
 
         const booking = await bookingCollection.findOne({
@@ -200,9 +175,7 @@ async function run() {
         });
 
         if (!booking) {
-          return res
-            .status(404)
-            .send({ message: "Booking not found" });
+          return res.status(404).send({ message: "Booking not found" });
         }
 
         const amount =
@@ -216,9 +189,7 @@ async function run() {
           ) || 0;
 
         if (!amount) {
-          return res
-            .status(400)
-            .send({ message: "Invalid booking amount" });
+          return res.status(400).send({ message: "Invalid booking amount" });
         }
 
         const session = await stripe.checkout.sessions.create({
@@ -231,8 +202,7 @@ async function run() {
                 currency: "usd",
                 unit_amount: amount,
                 product_data: {
-                  name:
-                    booking.tourTitle || "Tour Booking",
+                  name: booking.tourTitle || "Tour Booking",
                 },
               },
               quantity: 1,
@@ -250,12 +220,10 @@ async function run() {
         res.send({ url: session.url });
       } catch (error) {
         console.error("Stripe checkout error:", error);
-        res
-          .status(500)
-          .send({
-            message: "Failed to create checkout session",
-            error: error.message,
-          });
+        res.status(500).send({
+          message: "Failed to create checkout session",
+          error: error.message,
+        });
       }
     });
 
@@ -264,14 +232,10 @@ async function run() {
       try {
         const sessionId = req.query.session_id;
         if (!sessionId) {
-          return res
-            .status(400)
-            .send({ message: "Missing session_id" });
+          return res.status(400).send({ message: "Missing session_id" });
         }
 
-        const session = await stripe.checkout.sessions.retrieve(
-          sessionId
-        );
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
 
         const transactionId = session.payment_intent;
         const amount = session.amount_total; // cents
@@ -303,8 +267,7 @@ async function run() {
             createdAt: new Date(),
           };
 
-          const payResult =
-            await paymentCollection.insertOne(paymentDoc);
+          const payResult = await paymentCollection.insertOne(paymentDoc);
 
           // Update booking
           if (meta.bookingId) {
@@ -342,15 +305,160 @@ async function run() {
         });
       } catch (error) {
         console.error("Booking success error:", error);
-        res
-          .status(500)
-          .send({
-            message: "Failed to confirm booking",
-            error: error.message,
-          });
+        res.status(500).send({
+          message: "Failed to confirm booking",
+          error: error.message,
+        });
       }
     });
 
+    /* -------------------------- USERS CRUD -------------------------- */
+
+    // Create / Upsert user (Registration/Login)
+    app.post("/users", async (req, res) => {
+      try {
+        const user = req.body; // {name, email, avatar, country, travelStyle, ...}
+
+        if (!user.email) {
+          return res.status(400).send({ message: "Email is required" });
+        }
+
+        // default role: user
+        user.role = user.role || "user";
+        user.updatedAt = new Date();
+
+        const result = await usersCollection.updateOne(
+          { email: user.email },
+          { $set: user },
+          { upsert: true }
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error saving user:", error);
+        res.status(500).send({
+          message: "Failed to save user",
+          error: error.message,
+        });
+      }
+    });
+
+    // Get all users (for admin)
+    app.get("/users", async (req, res) => {
+      try {
+        const { role } = req.query;
+        const query = {};
+        if (role) query.role = role;
+
+        const users = await usersCollection
+          .find(query)
+          .sort({ updatedAt: -1 })
+          .toArray();
+
+        res.send(users);
+      } catch (error) {
+        console.error("Get users error:", error);
+        res.status(500).send({ message: "Failed to get users" });
+      }
+    });
+
+    // Get user profile by email (for Profile page / useAuth)
+    app.get("/users/profile/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const user = await usersCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send(user);
+      } catch (error) {
+        console.error("Get user profile error:", error);
+        res.status(500).send({ message: "Failed to get user profile" });
+      }
+    });
+
+    // Update user profile (name, phone, country, travelStyle, etc)
+    app.patch("/users/profile/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const updated = req.body;
+
+        // নিরাপদ থাকার জন্য কিছু field override হতে দেব না
+        delete updated.email;
+        delete updated.role;
+
+        const result = await usersCollection.updateOne(
+          { email },
+          {
+            $set: {
+              ...updated,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error("Update user profile error:", error);
+        res.status(500).send({ message: "Failed to update user profile" });
+      }
+    });
+
+    // Get user role by email (useAdmin hook এর জন্য)
+    app.get("/users/:email/role", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const user = await usersCollection.findOne({ email });
+        res.send({ role: user?.role || "user" });
+      } catch (error) {
+        console.error("Get user role error:", error);
+        res.status(500).send({ message: "Failed to get user role" });
+      }
+    });
+
+    // Update user role (admin panel → Make Admin)
+    app.patch("/users/:id/role", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { role } = req.body;
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              role,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error("Update user role error:", error);
+        res.status(500).send({ message: "Failed to update role" });
+      }
+    });
+
+    // Delete user (admin)
+    app.delete("/users/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await usersCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error("Delete user error:", error);
+        res.status(500).send({ message: "Failed to delete user" });
+      }
+    });
     // test ping
     await client.db("admin").command({ ping: 1 });
     console.log("✅ Connected to MongoDB, APIs ready");
