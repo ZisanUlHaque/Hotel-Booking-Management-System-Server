@@ -32,7 +32,100 @@ async function run() {
     const paymentCollection = db.collection("payments"); // ✅ NEW
     const usersCollection = db.collection("users"); // ✅ NEW
 
+    /* -------------------------- DASHBOARD STATS -------------------------- */
 
+    app.get("/dashboard-stats", async (req, res) => {
+      try {
+        // overall counts
+        const totalBookings = await bookingCollection.countDocuments();
+        const confirmed = await bookingCollection.countDocuments({
+          status: "confirmed",
+        });
+        const pending = await bookingCollection.countDocuments({
+          status: "pending",
+        });
+        const cancelled = await bookingCollection.countDocuments({
+          status: "cancelled",
+        });
+        const totalUsers = await usersCollection.countDocuments();
+
+        // revenue (cents)
+        const revenueAgg = await paymentCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                total: { $sum: "$amount" },
+              },
+            },
+          ])
+          .toArray();
+        const totalRevenue = revenueAgg[0]?.total || 0;
+
+        // recent bookings
+        const recentBookings = await bookingCollection
+          .find({})
+          .sort({ createdAt: -1 })
+          .limit(6)
+          .toArray();
+
+        // simple booking chart data: last 6 months by createdAt
+        const allBookings = await bookingCollection
+          .find({})
+          .project({ createdAt: 1 })
+          .toArray();
+
+        const monthMap = {}; // { '2025-0': count, ...}
+        allBookings.forEach((b) => {
+          const d = new Date(b.createdAt);
+          if (isNaN(d)) return;
+          const key = `${d.getFullYear()}-${d.getMonth()}`;
+          monthMap[key] = (monthMap[key] || 0) + 1;
+        });
+
+        const monthNames = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+
+        const bookingChartData = Object.entries(monthMap)
+          .map(([key, count]) => {
+            const [year, month] = key.split("-").map(Number);
+            return {
+              name: `${monthNames[month]} ${String(year).slice(-2)}`,
+              bookings: count,
+              sortKey: new Date(year, month, 1).getTime(),
+            };
+          })
+          .sort((a, b) => a.sortKey - b.sortKey)
+          .slice(-6) // last 6 months
+          .map(({ sortKey, ...rest }) => rest);
+
+        res.send({
+          totalBookings,
+          confirmed,
+          pending,
+          cancelled,
+          totalRevenue, // cents
+          totalUsers,
+          recentBookings,
+          bookingChartData,
+        });
+      } catch (error) {
+        console.error("Dashboard stats error:", error);
+        res.status(500).send({ message: "Failed to get dashboard stats" });
+      }
+    });
     // ✅ GET all bookings or filter by email
     app.get("/bookings", async (req, res) => {
       try {
