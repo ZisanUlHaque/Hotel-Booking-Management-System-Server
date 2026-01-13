@@ -1,2 +1,7 @@
 .env
 node_modules
+travelio-03-firebase-adminsdk.json
+.vercel
+
+vercel.json
+keyconvert.js
